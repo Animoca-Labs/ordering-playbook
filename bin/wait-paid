@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# wait-paid — poll `clink ucp-order get` until the order's OMS ticket reads paid.
+# Usage: wait-paid ord_... [max_seconds]
+# One short progress line per poll keeps stdout active (the agent bash tool
+# idle-stubs a command after 15s of silence). The full paid envelope is printed
+# exactly once when payment confirms. Exit 0 = paid (paid JSON is the last
+# output), 1 = still unpaid after max_seconds, 2 = bad argument.
+set -u
+if [ $# -lt 1 ]; then
+  echo "usage: wait-paid ord_... [max_seconds]" >&2
+  exit 2
+fi
+ORDER_ID="$1"
+MAX="${2:-180}"
+POLL_S="${WAIT_PAID_POLL_SECONDS:-5}"
+CLINK="${CLINK_BIN:-/home/user/skills/agentic-payment-skills/bin/clink}"
+case "$ORDER_ID" in
+  ord_*) ;;
+  *) echo "wait-paid: expected an ord_... order id, got: $ORDER_ID" >&2; exit 2 ;;
+esac
+case "$MAX" in
+  ''|*[!0-9]*) echo "wait-paid: max_seconds must be a positive integer, got: $MAX" >&2; exit 2 ;;
+esac
+deadline=$((SECONDS + MAX))
+n=0
+while [ "$SECONDS" -lt "$deadline" ]; do
+  out="$("$CLINK" ucp-order get --order-id "$ORDER_ID" --format json 2>&1)"
+  if printf '%s' "$out" | grep -Eq '"result":"paid"|"status":"paid"|"detailStatus":"complete(d)?"'; then
+    printf '%s\n' "$out"
+    printf '%s' "$out" 2>/dev/null > /home/user/.last-paid-order.json || true
+    exit 0
+  fi
+  n=$((n + 1))
+  echo "wait-paid: poll $n - not paid yet"
+  sleep "$POLL_S"
+done
+echo "WAIT_PAID_TIMEOUT order=$ORDER_ID after ${MAX}s"
+exit 1
